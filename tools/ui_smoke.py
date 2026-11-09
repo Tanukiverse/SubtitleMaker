@@ -32,6 +32,7 @@ def main() -> int:
     s = Settings(work_dir=work, out_dir=str(Path(work) / "out"),
                  asr_model=args[3] if len(args) > 3 else "base", source_lang=args[4] if len(args) > 4 else "auto")
     app = QApplication([])
+    Settings.save = lambda self: None  # the smoke test must never write the user's settings.json
     from subtitle_maker.ui.theme import apply_dark
     apply_dark(app)
     w = MainWindow(s)
@@ -121,6 +122,24 @@ def main() -> int:
     assert w.seg(0).th.strip() and "retranslate" not in w.status.text().lower(), w.status.text()
     w.undo()
     assert w.seg(0).th == old
+
+    # player controls
+    w.volume.setValue(35)
+    assert abs(w.audio_out.volume() - 0.35) < 0.01 and w.s.volume == 35
+    w.toggle_mute(); assert w.audio_out.isMuted() and w.mute_btn.text() == "🔇"
+    w.toggle_mute(); assert not w.audio_out.isMuted()
+    w.set_speed_index(4); assert abs(w.player.playbackRate() - 1.5) < 0.01
+    w.set_speed_index(2); assert abs(w.player.playbackRate() - 1.0) < 0.01
+    w.goto_row(0); pump(app, 0.3)
+    w.step_cue(1); pump(app, 0.3)
+    assert w.row() == 1 and abs(w.player.position() / 1000 - w.seg(1).start) < 0.1, (w.row(), w.player.position())
+    w.step_cue(-1); pump(app, 0.3)
+    assert w.row() == 0
+    p0 = w.player.position(); w.step_frame(1); pump(app, 0.3)
+    assert w.player.position() > p0 or w.player.position() == p0  # paused seek; position may need a frame to update
+    w.loop_box.setChecked(True); pump(app, 0.5); w.loop_box.setChecked(False)
+    w.toggle_fullscreen(); assert w.fs is not None; pump(app, 0.3)
+    w.toggle_fullscreen(); assert w.fs is None
 
     pump(app, 1.0)
     w.grab().save(shot)

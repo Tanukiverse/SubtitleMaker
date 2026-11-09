@@ -20,7 +20,7 @@ from ..core.settings import Settings
 from ..core.translate import OllamaTranslator, TranslatorConfig
 from .find_dialog import FindDialog
 from .settings_dialog import SettingsDialog
-from .widgets import TimeSpin, VideoView, Waveform, fmt_time
+from .widgets import FullscreenVideo, TimeSpin, VideoView, Waveform, fmt_time
 from .glossary_dialog import GlossaryDialog
 from .worker import ExportWorker, RetranslateWorker, TermsWorker, Worker
 
@@ -152,15 +152,49 @@ class MainWindow(QMainWindow):
         self.player.durationChanged.connect(self.on_duration)
         self.player.mediaStatusChanged.connect(self.on_media_status)
         self.player.errorOccurred.connect(self.on_player_error)
-        self.play_btn = QPushButton("▶"); self.play_btn.setFixedWidth(44)
-        self.play_btn.clicked.connect(self.toggle_play)
+        self.fs: FullscreenVideo | None = None
+
+        def tbtn(text: str, tip: str, slot, width: int = 36) -> QPushButton:
+            b = QPushButton(text); b.setFixedWidth(width); b.setToolTip(tip); b.clicked.connect(slot)
+            return b
+
+        self.play_btn = tbtn("▶", "เล่น / หยุด (Ctrl+Space)", self.toggle_play, 44)
+        b_prev = tbtn("⏮", "บรรทัดซับก่อนหน้า (Alt+↑)", lambda: self.step_cue(-1))
+        b_fb = tbtn("◂|", "ถอยหนึ่งเฟรม (Alt+←)", lambda: self.step_frame(-1))
+        b_ff = tbtn("|▸", "ไปหน้าหนึ่งเฟรม (Alt+→)", lambda: self.step_frame(1))
+        b_next = tbtn("⏭", "บรรทัดซับถัดไป (Alt+↓)", lambda: self.step_cue(1))
         self.seek = QSlider(Qt.Horizontal)
         self.seek.sliderMoved.connect(self.player.setPosition)
         self.time_label = QLabel("00:00:00.000")
+        row1 = QHBoxLayout()
+        for w in (b_prev, b_fb, self.play_btn, b_ff, b_next, self.seek, self.time_label):
+            row1.addWidget(w)
+
+        self.loop_box = QCheckBox("🔁 วนบรรทัดนี้")
+        self.loop_box.setToolTip("เล่นช่วงเวลาของบรรทัดที่เลือกซ้ำๆ (Ctrl+L)")
+        self.loop_box.toggled.connect(self.on_loop_toggled)
+        self.speed_box = QComboBox()
+        for r in (0.5, 0.75, 1.0, 1.25, 1.5, 2.0):
+            self.speed_box.addItem(f"{r:g}x", r)
+        self.speed_box.setCurrentIndex(2)
+        self.speed_box.setToolTip("ความเร็วเล่น")
+        self.speed_box.activated.connect(self.on_speed_chosen)
+        self.mute_btn = tbtn("🔊", "ปิด/เปิดเสียง (Ctrl+Shift+M)", self.toggle_mute, 34)
+        self.volume = QSlider(Qt.Horizontal)
+        self.volume.setRange(0, 100); self.volume.setMaximumWidth(110); self.volume.setToolTip("ระดับเสียง")
+        self.volume.setValue(self.s.volume)
+        self.audio_out.setVolume(self.s.volume / 100)
+        self.volume.valueChanged.connect(self.on_volume)
+        self.vol_save = QTimer(self, singleShot=True, interval=600)
+        self.vol_save.timeout.connect(self.s.save)
+        b_fs = tbtn("⛶", "เต็มจอ (F11)", self.toggle_fullscreen, 34)
         self.sync_box = QCheckBox("ตารางตามวิดีโอ"); self.sync_box.setChecked(True)
-        ctl = QHBoxLayout()
-        for w in (self.play_btn, self.seek, self.time_label, self.sync_box):
-            ctl.addWidget(w)
+        row2 = QHBoxLayout()
+        for w in (self.loop_box, QLabel("ความเร็ว"), self.speed_box, self.mute_btn, self.volume, b_fs, self.sync_box):
+            row2.addWidget(w)
+        row2.addStretch(1)
+        ctl = QVBoxLayout(); ctl.setSpacing(2)
+        ctl.addLayout(row1); ctl.addLayout(row2)
 
         # ---- tabs
         self.tabs = QTabWidget()
@@ -280,6 +314,17 @@ class MainWindow(QMainWindow):
         act(m, "เล่น / หยุด", self.toggle_play, "Ctrl+Space")
         act(m, "ถอยหลัง 5 วินาที", lambda: self.seek_to(self.player.position() / 1000 - 5), "Ctrl+Left")
         act(m, "ไปหน้า 5 วินาที", lambda: self.seek_to(self.player.position() / 1000 + 5), "Ctrl+Right")
+        act(m, "บรรทัดซับก่อนหน้า", lambda: self.step_cue(-1), "Alt+Up")
+        act(m, "บรรทัดซับถัดไป", lambda: self.step_cue(1), "Alt+Down")
+        act(m, "ถอยหนึ่งเฟรม", lambda: self.step_frame(-1), "Alt+Left")
+        act(m, "ไปหน้าหนึ่งเฟรม", lambda: self.step_frame(1), "Alt+Right")
+        m.addSeparator()
+        act(m, "วนบรรทัดที่เลือก (เปิด/ปิด)", lambda: self.loop_box.toggle(), "Ctrl+L")
+        sm = m.addMenu("ความเร็วเล่น")
+        for k in range(self.speed_box.count()):
+            act(sm, self.speed_box.itemText(k), lambda k=k: self.set_speed_index(k))
+        act(m, "ปิด/เปิดเสียง", self.toggle_mute, "Ctrl+Shift+M")
+        act(m, "เต็มจอ", self.toggle_fullscreen, "F11")
         m = mb.addMenu("อัตโนมัติ")
         act(m, "ทำทั้งหมด", lambda: self.run_steps(None), "F5")
         for st in STEPS:
@@ -790,6 +835,72 @@ class MainWindow(QMainWindow):
         else:
             self.player.play(); self.play_btn.setText("⏸")
 
+    def step_cue(self, d: int) -> None:
+        """Jump to the start of the previous (-1) or next (+1) subtitle line, relative to the playback position."""
+        if not self.proj or not self.proj.segments:
+            return
+        t = self.player.position() / 1000
+        segs = self.proj.segments
+        if d > 0:
+            idx = next((k for k, x in enumerate(segs) if x.start > t + 0.05), None)
+        else:
+            idx = next((k for k in range(len(segs) - 1, -1, -1) if segs[k].start < t - 0.3), None)
+        if idx is not None:
+            self.goto_row(idx)
+            self.seek_to(segs[idx].start)
+
+    def step_frame(self, d: int) -> None:
+        self.player.pause()
+        self.play_btn.setText("▶")
+        self.seek_to(max(0.0, self.player.position() / 1000 + d * 0.042))  # about one frame at 24 fps
+
+    def on_loop_toggled(self, on: bool) -> None:
+        s = self.seg()
+        if on and s is not None:
+            self.seek_to(s.start)
+            if self.player.playbackState() != QMediaPlayer.PlayingState:
+                self.toggle_play()
+
+    def on_speed_chosen(self, _i: int) -> None:
+        self.player.setPlaybackRate(float(self.speed_box.currentData()))
+
+    def set_speed_index(self, k: int) -> None:
+        self.speed_box.setCurrentIndex(k)
+        self.on_speed_chosen(k)
+
+    def on_volume(self, v: int) -> None:
+        self.audio_out.setVolume(v / 100)
+        self.s.volume = v
+        self.vol_save.start()  # save once the slider stops moving
+        if self.audio_out.isMuted() and v > 0:
+            self.toggle_mute()
+
+    def toggle_mute(self) -> None:
+        m = not self.audio_out.isMuted()
+        self.audio_out.setMuted(m)
+        self.mute_btn.setText("🔇" if m else "🔊")
+
+    def toggle_fullscreen(self) -> None:
+        if self.fs is not None:
+            self.exit_fullscreen()
+            return
+        self.fs = FullscreenVideo()
+        self.fs.view.sub.set_style(self.s.sub_size_pct, self.s.sub_bottom_pct, self.s.sub_color, self.s.sub_outline)
+        self.fs.closed.connect(self.exit_fullscreen)
+        self.fs.toggleRequested.connect(self.toggle_play)
+        self.player.setVideoOutput(self.fs.view.video)
+        self.fs.view._on_native_size(self.view.video.nativeSize())
+        self.fs.showFullScreen()
+        self.fs.setFocus()
+
+    def exit_fullscreen(self) -> None:
+        if self.fs is None:
+            return
+        fs, self.fs = self.fs, None
+        self.player.setVideoOutput(self.view.video)
+        fs.close()
+        fs.deleteLater()
+
     def seek_to(self, t: float, from_table: bool = False) -> None:
         self.player.setPosition(max(0, int(t * 1000)))
         self.wave.set_playhead(max(0.0, t))
@@ -820,8 +931,15 @@ class MainWindow(QMainWindow):
         self.time_label.setText(fmt_time(t))
         self.wave.set_playhead(t)
         cue = next(((k, s) for k, s in enumerate(self.proj.segments) if s.start <= t <= s.end), None) if self.proj else None
-        self.view.sub.set_text((cue[1].th or cue[1].text) if cue else "")
-        if cue and self.sync_box.isChecked() and cue[0] != self.row() and self.player.playbackState() == QMediaPlayer.PlayingState:
+        text = (cue[1].th or cue[1].text) if cue else ""
+        self.view.sub.set_text(text)
+        if self.fs is not None:
+            self.fs.view.sub.set_text(text)
+        playing = self.player.playbackState() == QMediaPlayer.PlayingState
+        if self.loop_box.isChecked() and playing and (sel := self.seg()) is not None and (t >= sel.end or t < sel.start - 0.1):
+            self.player.setPosition(int(sel.start * 1000))  # loop the selected line
+            return
+        if cue and self.sync_box.isChecked() and not self.loop_box.isChecked() and cue[0] != self.row() and playing:
             self._seek_on_select = False
             self.goto_row(cue[0])
             self._seek_on_select = True
@@ -958,6 +1076,7 @@ class MainWindow(QMainWindow):
             self.refresh_table()
 
     def closeEvent(self, e):
+        self.exit_fullscreen()
         self.save_project()
         if getattr(self, "export_worker", None):
             self.export_worker.stop(); self.export_worker.wait(5000)

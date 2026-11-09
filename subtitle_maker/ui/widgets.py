@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QValidator
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
-from PySide6.QtWidgets import (QDoubleSpinBox, QGraphicsItem, QGraphicsScene, QGraphicsView, QWidget)
+from PySide6.QtWidgets import (QDoubleSpinBox, QGraphicsItem, QGraphicsScene, QGraphicsView, QVBoxLayout, QWidget)
 
 from ..core.project import Seg
 
@@ -357,3 +357,33 @@ class Waveform(QWidget):
         else:
             self.t0 = max(0.0, self.t0 - (1 if e.angleDelta().y() > 0 else -1) * self.width() * self.spp * 0.15)
             self.update()
+
+
+
+class FullscreenVideo(QWidget):
+    """Full-screen copy of the video view. Esc / F11 / double-click leaves, Space plays and pauses."""
+    closed = Signal()
+    toggleRequested = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Subtitle Maker")
+        self.setStyleSheet("background:black;")
+        self.view = VideoView()
+        self.view.setMinimumHeight(0)
+        self.view.setFocusPolicy(Qt.NoFocus)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.view)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def keyPressEvent(self, e) -> None:
+        if e.key() in (Qt.Key_Escape, Qt.Key_F11):
+            self.closed.emit()
+        elif e.key() == Qt.Key_Space:
+            self.toggleRequested.emit()
+        else:
+            super().keyPressEvent(e)
+
+    def mouseDoubleClickEvent(self, _e) -> None:
+        self.closed.emit()

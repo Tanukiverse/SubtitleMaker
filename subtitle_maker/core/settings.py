@@ -31,6 +31,7 @@ class Settings:
     out_dir: str = ""  # empty = next to the video
     write_source_srt: bool = False  # also write the untranslated .srt
     ui_font_size: int = 11
+    volume: int = 80  # player volume, 0-100
     table_font_size: int = 11  # cue list
     edit_font_size: int = 13  # text boxes under the list
     # subtitle look: the same on the video preview and in burned-in video (percent of the picture height)
