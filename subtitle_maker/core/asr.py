@@ -1,0 +1,118 @@
+"""Speech to text with faster-whisper. The model is freed after each run so Ollama gets the VRAM (8 GB card)."""
+from __future__ import annotations
+
+import gc
+import os
+import sys
+from pathlib import Path
+from typing import Callable
+
+from .paths import WHISPER_DIR
+from .project import Seg
+
+
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # Windows without Developer Mode has no symlinks
+
+
+class AsrError(RuntimeError):
+    pass
+
+
+def _add_cuda_dll_dirs() -> None:
+    """ctranslate2 needs cuBLAS/cuDNN DLLs: from the nvidia-*-cu12 wheels (site-packages/nvidia/*/bin)."""
+    if sys.platform != "win32":
+        return
+    for base in sys.path:
+        for lib in sorted((Path(base) / "nvidia").glob("*/bin")) if (Path(base) / "nvidia").is_dir() else []:
+            os.add_dll_directory(str(lib))
+            os.environ["PATH"] = str(lib) + os.pathsep + os.environ.get("PATH", "")
+
+
+def read_wav(path: str | Path):
+    """16-bit mono wav (as written by audio.extract) -> float32 array in [-1, 1]."""
+    import wave
+
+    import numpy as np
+    with wave.open(str(path), "rb") as w:
+        if w.getsampwidth() != 2 or w.getnchannels() != 1:
+            raise AsrError("ไฟล์เสียงต้องเป็น 16-bit mono (ใช้ audio.extract)")
+        return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+
+
+SENTENCE_END = "。？！?!…"
+
+
+def chunk_words(words, max_gap: float = 0.9, max_dur: float = 6.5, pad: float = 0.2) -> list[Seg]:
+    """Cut one Whisper segment into cues from its word timings. Whisper's own segment end often runs on
+    through silence or music up to the next line (a 9-character line shown for 118 s), so the cue starts at
+    its first word and ends at its last. New cue at a pause longer than max_gap, after sentence-ending
+    punctuation (once there is a little text), or when the cue would pass max_dur."""
+    out: list[Seg] = []
+    cur: list = []
+
+    def flush() -> None:
+        if not cur:
+            return
+        text = "".join(w.word for w in cur).strip()
+        if text:
+            out.append(Seg(start=float(cur[0].start), end=float(cur[-1].end) + pad, text=text))
+        cur.clear()
+
+    for w in words:
+        if cur and (w.start - cur[-1].end > max_gap or w.end - cur[0].start > max_dur):
+            flush()
+        cur.append(w)
+        if w.word.strip()[-1:] in SENTENCE_END and len("".join(x.word for x in cur).strip()) >= 6:
+            flush()
+    flush()
+    for a, b in zip(out, out[1:]):  # padding must not run into the next cue
+        a.end = min(a.end, max(b.start - 0.04, a.start + 0.2))
+    return out
+
+
+def _load(model: str, use_gpu: bool):
+    _add_cuda_dll_dirs()
+    from faster_whisper import WhisperModel
+    WHISPER_DIR.mkdir(parents=True, exist_ok=True)
+    if use_gpu:
+        try:
+            return WhisperModel(model, device="cuda", compute_type="float16", download_root=str(WHISPER_DIR)), "cuda"
+        except Exception as e:  # CUDA missing or too old for this card
+            print(f"[asr] โหลดบน GPU ไม่ได้ ({e}); ใช้ CPU แทน", file=sys.stderr)
+    return WhisperModel(model, device="cpu", compute_type="int8", download_root=str(WHISPER_DIR)), "cpu"
+
+
+def transcribe(wav: str | Path, model: str = "large-v3-turbo", language: str = "auto", use_gpu: bool = True,
+               vad: bool = True, progress: Callable[[float], None] | None = None,
+               should_stop: Callable[[], bool] | None = None) -> tuple[list[Seg], str]:
+    """Returns (segments, language). language 'auto' lets Whisper detect it from the first 30 s."""
+    wm, device = _load(model, use_gpu)
+    try:
+        # read our own 16 kHz mono wav instead of letting faster-whisper decode it with PyAV
+        # (PyAV 19 rejects the metadata_errors argument faster-whisper 1.2 passes)
+        segs_iter, info = wm.transcribe(
+            read_wav(wav), language=None if language in ("", "auto") else language,
+            vad_filter=vad, vad_parameters={"min_silence_duration_ms": 500},
+            beam_size=5, condition_on_previous_text=False, word_timestamps=True,  # stops one hallucination repeating down the file
+        )
+        out: list[Seg] = []
+        total = max(info.duration, 0.001)
+        for s in segs_iter:
+            if should_stop and should_stop():
+                raise AsrError("หยุดโดยผู้ใช้")
+            if s.words:
+                out += chunk_words(s.words)
+            elif s.text.strip():
+                out.append(Seg(start=float(s.start), end=float(s.end), text=s.text.strip()))
+            if progress:
+                progress(min(1.0, s.end / total))
+        return out, info.language
+    finally:
+        del wm
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass

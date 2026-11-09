@@ -1,0 +1,8 @@
+# cuBLAS/cuDNN DLLs for faster-whisper on the GPU (much smaller than installing torch)
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+faster-whisper>=1.1.0
+pythainlp>=5.0.0
+requests>=2.32
+PySide6>=6.8
+pytest>=8.0
