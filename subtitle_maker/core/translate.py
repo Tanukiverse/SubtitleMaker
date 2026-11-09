@@ -79,8 +79,16 @@ def strip_id(answer: str, i: int) -> str:
 _ALT = re.compile(r"\s*\(?\s*(ครับ|ค่ะ|คะ|ผม|ฉัน|ดิฉัน|นะครับ|นะคะ)\s*/\s*(ครับ|ค่ะ|คะ|ผม|ฉัน|ดิฉัน|นะครับ|นะคะ)\s*\)?")
 
 
+_ARABIC = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
+
+
+def arabic_digits(text: str) -> str:
+    return text.translate(_ARABIC)
+
+
 def pick_one(text: str) -> str:
-    return _ALT.sub(lambda m: m.group(1), text)
+    """One speaker per cue ('ค่ะ/ครับ' -> 'ค่ะ'); also writes any Thai digits as Arabic ones."""
+    return arabic_digits(_ALT.sub(lambda m: m.group(1), text))
 
 
 def parse_response(content: str) -> dict[int, str]:

@@ -182,3 +182,10 @@ def test_strip_id_from_freeform_lines():
     assert strip_id("[7] สวัสดี", 7) == "สวัสดี"
     assert strip_id("7 วัน ต่อมา", 8) == "7 วัน ต่อมา"  # a number that is not the cue's id stays
     assert strip_id("สวัสดี", 1) == "สวัสดี"
+
+
+def test_thai_digits_become_arabic():
+    from subtitle_maker.core.translate import arabic_digits
+    assert arabic_digits("เวลา ๑๒:๓๐ น. ราคา ๙๙๐ บาท") == "เวลา 12:30 น. ราคา 990 บาท"
+    assert pick_one("อีก ๓ ครั้ง") == "อีก 3 ครั้ง"
+    assert parse_response('{"translations":[{"id":1,"text":"ชั้น ๒"}]}') == {1: "ชั้น 2"}

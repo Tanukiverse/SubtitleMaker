@@ -33,7 +33,8 @@ def main() -> int:
                  asr_model=args[3] if len(args) > 3 else "base", source_lang=args[4] if len(args) > 4 else "auto")
     app = QApplication([])
     Settings.save = lambda self: None  # the smoke test must never write the user's settings.json
-    from subtitle_maker.ui.theme import apply_dark
+    from subtitle_maker.ui.theme import apply_dark, use_arabic_digits
+    use_arabic_digits()
     apply_dark(app)
     w = MainWindow(s)
     w.show()

@@ -1,4 +1,5 @@
 """Dark theme (Fusion style + dark palette)."""
+from PySide6.QtCore import QLocale
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -19,3 +20,9 @@ def apply_dark(app: QApplication) -> None:
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
         p.setColor(QPalette.Disabled, role, QColor(120, 122, 126))
     app.setPalette(p)
+
+
+def use_arabic_digits() -> None:
+    """With a Thai Windows locale Qt writes numbers in Thai digits (spin boxes show ๔๐ instead of 40).
+    Use a locale with Arabic digits for the whole program; call before any widget is created."""
+    QLocale.setDefault(QLocale(QLocale.English, QLocale.UnitedStates))
