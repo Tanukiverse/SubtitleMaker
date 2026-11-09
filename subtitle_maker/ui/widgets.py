@@ -57,18 +57,21 @@ class TimeSpin(QDoubleSpinBox):
 
 
 class SubtitleItem(QGraphicsItem):
-    """The current cue, white with a black outline, centred near the bottom of the video."""
+    """The current cue, white with a black outline. Normally centred near the bottom of the video; the
+    settings shift it up/down and sideways, and a cue can be at the top or in the middle instead."""
 
     def __init__(self):
         super().__init__()
         self.text = ""
+        self.pos_name = ""  # "", "top" or "middle"
         self.w, self.h = 1280.0, 720.0
-        self.size_pct, self.bottom_pct = 6.0, 5.0
+        self.size_pct, self.bottom_pct, self.x_pct = 6.0, 5.0, 0.0
         self.color, self.outline = QColor("#ffffff"), QColor("#000000")
+        self.text_rect = QRectF()  # where the text was last drawn (scene coordinates), for dragging
         self.setZValue(10)
 
-    def set_style(self, size_pct: float, bottom_pct: float, color: str, outline: str) -> None:
-        self.size_pct, self.bottom_pct = size_pct, bottom_pct
+    def set_style(self, size_pct: float, bottom_pct: float, color: str, outline: str, x_pct: float = 0.0) -> None:
+        self.size_pct, self.bottom_pct, self.x_pct = size_pct, bottom_pct, x_pct
         self.color, self.outline = QColor(color), QColor(outline)
         self.update()
 
@@ -76,9 +79,11 @@ class SubtitleItem(QGraphicsItem):
         self.prepareGeometryChange()
         self.w, self.h = w, h
 
-    def set_text(self, text: str) -> None:
-        if text != self.text:
-            self.text = text
+    def set_text(self, text: str, pos: str = "") -> None:
+        if (text, pos) != (self.text, self.pos_name):
+            self.text, self.pos_name = text, pos
+            if not text:
+                self.text_rect = QRectF()
             self.update()
 
     def boundingRect(self) -> QRectF:
@@ -91,11 +96,22 @@ class SubtitleItem(QGraphicsItem):
         fm = QFontMetricsF(font)
         lines = self.text.split("\n")
         lh = fm.height() * 1.05
-        y = self.h - self.h * self.bottom_pct / 100 - lh * len(lines) + fm.ascent()
+        block = lh * len(lines)
+        margin = self.h * self.bottom_pct / 100
+        if self.pos_name == "top":
+            top = margin
+        elif self.pos_name == "middle":
+            top = (self.h - block) / 2
+        else:
+            top = self.h - margin - block
+        cx = self.w / 2 + self.w * self.x_pct / 100
+        widest = max(fm.horizontalAdvance(ln) for ln in lines)
+        self.text_rect = QRectF(cx - widest / 2, top, widest, block)
         p.setRenderHint(QPainter.Antialiasing)
+        y = top + fm.ascent()
         for ln in lines:
             path = QPainterPath()
-            path.addText(QPointF((self.w - fm.horizontalAdvance(ln)) / 2, y), font, ln)
+            path.addText(QPointF(cx - fm.horizontalAdvance(ln) / 2, y), font, ln)
             p.setPen(QPen(self.outline, max(2.0, self.h * 0.007), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             p.setBrush(Qt.NoBrush)
             p.drawPath(path)
@@ -105,6 +121,9 @@ class SubtitleItem(QGraphicsItem):
 
 
 class VideoView(QGraphicsView):
+    subMoved = Signal(float, float)  # x shift %, distance from the bottom % (dragging the subtitle)
+    subResetRequested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
@@ -120,6 +139,8 @@ class VideoView(QGraphicsView):
         self.scene().addItem(self.sub)
         self.video.nativeSizeChanged.connect(self._on_native_size)
         self.setMinimumHeight(180)
+        self.setMouseTracking(True)
+        self._drag = None
 
     def _on_native_size(self, size) -> None:
         if size.isEmpty():
@@ -136,6 +157,47 @@ class VideoView(QGraphicsView):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self.fit()
+
+    # ---- drag the subtitle to where it should sit
+    def _on_sub(self, e) -> bool:
+        r = self.sub.text_rect
+        return bool(self.sub.text) and not r.isNull() and r.adjusted(-10, -10, 10, 10).contains(self.mapToScene(e.position().toPoint()))
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton and self._on_sub(e):
+            self._drag = (self.mapToScene(e.position().toPoint()), QRectF(self.sub.text_rect))
+            self.setCursor(Qt.ClosedHandCursor)
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e) -> None:
+        if self._drag is None:
+            self.setCursor(Qt.OpenHandCursor if self._on_sub(e) else Qt.ArrowCursor)
+            super().mouseMoveEvent(e)
+            return
+        p0, r0 = self._drag
+        d = self.mapToScene(e.position().toPoint()) - p0
+        w, h = self.sub.w, self.sub.h
+        x_pct = min(max((r0.center().x() + d.x() - w / 2) / w * 100, -45.0), 45.0)
+        bottom_pct = min(max((h - (r0.bottom() + d.y())) / h * 100, 0.0), 90.0)
+        if self.sub.pos_name == "top":
+            bottom_pct = min(max((r0.top() + d.y()) / h * 100, 0.0), 90.0)  # margin from the top edge
+        elif self.sub.pos_name == "middle":
+            bottom_pct = self.sub.bottom_pct  # the middle has no margin: only sideways
+        self.subMoved.emit(round(x_pct, 1), round(bottom_pct, 1))
+
+    def mouseReleaseEvent(self, e) -> None:
+        if self._drag is not None:
+            self._drag = None
+            self.setCursor(Qt.OpenHandCursor if self._on_sub(e) else Qt.ArrowCursor)
+            return
+        super().mouseReleaseEvent(e)
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        if self._on_sub(e):
+            self.subResetRequested.emit()
+            return
+        super().mouseDoubleClickEvent(e)
 
 
 class Waveform(QWidget):

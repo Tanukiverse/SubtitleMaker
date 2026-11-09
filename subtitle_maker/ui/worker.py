@@ -89,9 +89,9 @@ class ExportWorker(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, mode: str, settings: Settings, video: str, srt_file: str, out: str, parent=None):
+    def __init__(self, mode: str, settings: Settings, video: str, srt_file: str, out: str, cues: list | None = None, parent=None):
         super().__init__(parent)
-        self.mode, self.s, self.video, self.srt_file, self.out = mode, settings, video, srt_file, out
+        self.mode, self.s, self.video, self.srt_file, self.out, self.cues = mode, settings, video, srt_file, out, cues or []
         self._stop = False
 
     def stop(self) -> None:
@@ -103,7 +103,7 @@ class ExportWorker(QThread):
     def run(self) -> None:
         try:
             if self.mode == "burn":
-                path = export.burn_in(self.video, self.srt_file, self.out, self.s, self._emit, lambda: self._stop)
+                path = export.burn_in(self.video, self.cues, self.out, self.s, self._emit, lambda: self._stop)
             else:
                 path = export.soft_sub(self.video, self.srt_file, self.out, progress=self._emit, should_stop=lambda: self._stop)
             self.done.emit(str(path))

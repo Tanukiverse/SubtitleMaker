@@ -83,6 +83,10 @@ class SettingsDialog(QDialog):
         self.bpct.setSuffix(" % จากขอบล่าง")
         for w in (self.tfont, self.efont, self.spct, self.bpct):
             w.setMinimumWidth(150)
+        self.xpct = QDoubleSpinBox(); self.xpct.setRange(-45, 45); self.xpct.setSingleStep(0.5); self.xpct.setValue(s.sub_x_pct)
+        self.xpct.setSuffix(" % ของความกว้าง (+ = ขวา)"); self.xpct.setMinimumWidth(190)
+        self.tags = QCheckBox("เขียนตำแหน่งบน/กลางลงไฟล์ .srt เป็นแท็ก {\\an8} {\\an5}")
+        self.tags.setChecked(s.srt_position_tags)
         self.c_text, self.c_out = s.sub_color, s.sub_outline
         self.b_text, self.b_out = QPushButton(), QPushButton()
         self.b_text.clicked.connect(lambda: self._pick_color("text"))
@@ -92,7 +96,9 @@ class SettingsDialog(QDialog):
         f.addRow("ขนาดฟอนต์ตาราง", self.tfont)
         f.addRow("ขนาดฟอนต์กล่องแก้ไข", self.efont)
         f.addRow("ขนาดซับบนวิดีโอ", self.spct)
-        f.addRow("ตำแหน่งซับ", self.bpct)
+        f.addRow("ตำแหน่งซับ (ขึ้น/ลง)", self.bpct)
+        f.addRow("ตำแหน่งซับ (ซ้าย/ขวา)", self.xpct)
+        f.addRow("", self.tags)
         f.addRow("สีตัวอักษรซับ", self.b_text)
         f.addRow("สีขอบซับ", self.b_out)
         f.addRow("ฟอนต์ซับตอนฝังลงวิดีโอ", self.burn_font)
@@ -143,6 +149,7 @@ class SettingsDialog(QDialog):
         s.story_notes = self.notes.text().strip()
         s.table_font_size, s.edit_font_size = self.tfont.value(), self.efont.value()
         s.sub_size_pct, s.sub_bottom_pct = self.spct.value(), self.bpct.value()
+        s.sub_x_pct, s.srt_position_tags = self.xpct.value(), self.tags.isChecked()
         s.sub_color, s.sub_outline = self.c_text, self.c_out
         s.burn_font = self.burn_font.text().strip() or "Leelawadee UI"
         return s

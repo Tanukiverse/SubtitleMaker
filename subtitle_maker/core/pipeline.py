@@ -84,11 +84,16 @@ class StepRunner:
         """Save the .srt exactly as the cues stand (for the editor: no re-wrapping, no retiming)."""
         translated = p.done.get("translate") or any(s.th for s in p.segments)
         if translated:
-            written = [srt.write_srt(self.srt_path(p.video, self.s.target_lang), [(s.start, s.end, s.th) for s in p.segments])]
+            written = [srt.write_srt(self.srt_path(p.video, self.s.target_lang), self.cues(p, "th"))]
             if self.s.write_source_srt:
-                written.append(srt.write_srt(self.srt_path(p.video, p.lang or "src"), [(s.start, s.end, s.text) for s in p.segments]))
+                written.append(srt.write_srt(self.srt_path(p.video, p.lang or "src"), self.cues(p, "text")))
             return written
-        return [srt.write_srt(self.srt_path(p.video, p.lang or "src"), [(s.start, s.end, s.text) for s in p.segments])]
+        return [srt.write_srt(self.srt_path(p.video, p.lang or "src"), self.cues(p, "text"))]
+
+    def cues(self, p: Project, field: str) -> list[tuple[float, float, str]]:
+        """(start, end, text) for the .srt; cues with a position get an {\\an8}/{\\an5} tag when the setting is on."""
+        tag = self.s.srt_position_tags
+        return [(s.start, s.end, srt.with_pos_tag(getattr(s, field), s.pos) if tag else getattr(s, field)) for s in p.segments]
 
     def _finish_export(self, p: Project, written: list[Path]) -> list[Path]:
         p.done["export"] = True

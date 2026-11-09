@@ -107,6 +107,16 @@ class Editor:
         self.segs.insert(i + 1, Seg(start, end, "", "", True))
         return i + 1
 
+    def set_pos(self, indices: list[int], pos: str) -> int:
+        """Put the given cues at the top / middle / normal ('') place. Returns how many changed."""
+        todo = [i for i in set(indices) if 0 <= i < len(self.segs) and self.segs[i].pos != pos]
+        if not todo:
+            return 0
+        self.push()
+        for i in todo:
+            self.segs[i].pos = pos
+        return len(todo)
+
     def delete(self, indices: list[int]) -> None:
         if not indices:
             return
@@ -124,6 +134,7 @@ class Editor:
         a.th = _join(a.th, b.th)
         a.end = max(a.end, b.end)
         a.locked = a.locked or b.locked
+        a.pos = a.pos or b.pos
         return True
 
     def split(self, i: int, pos: int, field: str = "th") -> int:
@@ -140,7 +151,7 @@ class Editor:
         opos = round(len(o) * frac)
         first, second = text[:pos].strip(), text[pos:].strip()
         o1, o2 = o[:opos].strip(), o[opos:].strip()
-        b = Seg(mid + 0.02, s.end, "", "", True)
+        b = Seg(mid + 0.02, s.end, "", "", True, s.pos)
         s.end = mid
         s.locked = True
         setattr(s, field, first); setattr(b, field, second)
@@ -149,15 +160,16 @@ class Editor:
         return i + 1
 
     # ---- whole list
-    def import_cues(self, cues: list[tuple[float, float, str]], field: str = "th", keep_other: bool = False) -> None:
+    def import_cues(self, cues: list[tuple], field: str = "th", keep_other: bool = False) -> None:
         """Replace the cue list with cues read from a .srt. field 'th' = they are the translation (hand-made
         subtitles: the cues are locked so automatic steps keep them), 'text' = they are the source language.
         keep_other: keep the other field of the old cue that starts at about the same time (re-timing an existing job)."""
         self.push()
         old = list(self.segs)
         new = []
-        for start, end, text in cues:
-            seg = Seg(float(start), float(end), "", "", field == "th")
+        for cue in cues:
+            start, end, text = cue[:3]
+            seg = Seg(float(start), float(end), "", "", field == "th", cue[3] if len(cue) > 3 else "")
             setattr(seg, field, text)
             if keep_other:
                 other = "text" if field == "th" else "th"

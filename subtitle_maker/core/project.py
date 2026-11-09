@@ -29,6 +29,7 @@ class Seg:
     text: str  # source-language text
     th: str = ""  # translation
     locked: bool = False  # edited by hand: automatic steps never overwrite it
+    pos: str = ""  # "" = normal place (bottom, or wherever the settings put it), "top" or "middle"
 
 
 @dataclass

@@ -79,7 +79,9 @@ class MainWindow(QMainWindow):
         for w in (self.src_edit, self.th_edit):
             ef = w.font(); ef.setPointSize(self.s.edit_font_size); w.setFont(ef)
         self.table.verticalHeader().setDefaultSectionSize(int(self.s.table_font_size * 2.1) + 6)
-        self.view.sub.set_style(self.s.sub_size_pct, self.s.sub_bottom_pct, self.s.sub_color, self.s.sub_outline)
+        self.view.sub.set_style(self.s.sub_size_pct, self.s.sub_bottom_pct, self.s.sub_color, self.s.sub_outline, self.s.sub_x_pct)
+        if getattr(self, "fs", None) is not None:
+            self.fs.view.sub.set_style(self.s.sub_size_pct, self.s.sub_bottom_pct, self.s.sub_color, self.s.sub_outline, self.s.sub_x_pct)
 
     # =============================================================== layout
     def _build_table_and_edit(self) -> None:
@@ -144,6 +146,10 @@ class MainWindow(QMainWindow):
 
     def _build_right(self) -> None:
         self.view = VideoView()
+        self.view.subMoved.connect(self.on_sub_moved)
+        self.view.subResetRequested.connect(self.reset_sub_position)
+        self.pos_save = QTimer(self, singleShot=True, interval=600)
+        self.pos_save.timeout.connect(self.s.save)
         self.player = QMediaPlayer(self)
         self.audio_out = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_out)
@@ -201,6 +207,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._tab_auto(), "อัตโนมัติ")
         self.tabs.addTab(self._tab_queue(), "คิวไฟล์")
         self.tabs.addTab(self._tab_adjust(), "ปรับเวลา")
+        self.tabs.addTab(self._tab_position(), "ตำแหน่งซับ")
 
         self.right = QWidget()
         rv = QVBoxLayout(self.right); rv.setContentsMargins(0, 0, 0, 0)
@@ -256,6 +263,34 @@ class MainWindow(QMainWindow):
         b4 = QPushButton("ตัดบรรทัดไทยอัตโนมัติทุกบรรทัด (ยกเว้นแถวที่แก้เอง 🔒)"); b4.clicked.connect(self.wrap_all)
         v.addWidget(b3); v.addWidget(b4); v.addStretch(1)
         return w
+
+    def _tab_position(self) -> QWidget:
+        w = QWidget(); v = QVBoxLayout(w)
+        v.addWidget(self._wrapped("ลากซับบนวิดีโอไปวางได้เลย (ใช้กับทุกบรรทัดและตอนฝังซับลงภาพ) ดับเบิลคลิกที่ซับเพื่อคืนค่าเริ่มต้น "
+                                  "ถ้าซับไม่ขึ้นบนภาพ ให้คลิกแถวในตารางก่อน"))
+        g = QGroupBox("ทุกบรรทัด: เลื่อนทีละนิด"); gl = QHBoxLayout(g)
+        self.nudge = QDoubleSpinBox(); self.nudge.setRange(0.1, 10); self.nudge.setSingleStep(0.5); self.nudge.setValue(1.0)
+        self.nudge.setSuffix(" %"); self.nudge.setMinimumWidth(80)
+        for text, tip, dx, dy in (("◀", "ซ้าย", -1, 0), ("▲", "ขึ้น", 0, 1), ("▼", "ลง", 0, -1), ("▶", "ขวา", 1, 0)):
+            b = QPushButton(text); b.setToolTip(tip); b.setFixedWidth(40)
+            b.clicked.connect(lambda _=False, dx=dx, dy=dy: self.nudge_sub(dx, dy))
+            gl.addWidget(b)
+        gl.addWidget(self.nudge)
+        b = QPushButton("รีเซ็ต"); b.clicked.connect(self.reset_sub_position); gl.addWidget(b)
+        v.addWidget(g)
+        g2 = QGroupBox("บรรทัดที่เลือกในตาราง (เลือกหลายแถวได้)"); g2l = QHBoxLayout(g2)
+        for text, pos in (("⬇ ล่าง (ปกติ)", ""), ("⏺ กลาง", "middle"), ("⬆ บน", "top")):
+            b = QPushButton(text); b.clicked.connect(lambda _=False, pos=pos: self.set_cue_pos(pos)); g2l.addWidget(b)
+        v.addWidget(g2)
+        v.addWidget(self._wrapped("ย้ายขึ้นบนเมื่อมีตัวหนังสือบนภาพที่ซับล่างจะไปทับ ตอนบันทึก .srt จะเขียนเป็นแท็ก {\\an8} "
+                                  "(ปิดได้ใน ⚙ ตั้งค่า) ส่วนฝังซับลงภาพจะวางตามตำแหน่งจริง"))
+        v.addStretch(1)
+        return w
+
+    @staticmethod
+    def _wrapped(text: str) -> QLabel:
+        lb = QLabel(text); lb.setWordWrap(True)
+        return lb
 
     def _build_waveform(self) -> None:
         self.wave = Waveform()
@@ -323,6 +358,12 @@ class MainWindow(QMainWindow):
         sm = m.addMenu("ความเร็วเล่น")
         for k in range(self.speed_box.count()):
             act(sm, self.speed_box.itemText(k), lambda k=k: self.set_speed_index(k))
+        sp = m.addMenu("ตำแหน่งซับ")
+        act(sp, "ขึ้น", lambda: self.nudge_sub(0, 1), "Ctrl+Alt+Up")
+        act(sp, "ลง", lambda: self.nudge_sub(0, -1), "Ctrl+Alt+Down")
+        act(sp, "ซ้าย", lambda: self.nudge_sub(-1, 0), "Ctrl+Alt+Left")
+        act(sp, "ขวา", lambda: self.nudge_sub(1, 0), "Ctrl+Alt+Right")
+        act(sp, "รีเซ็ตตำแหน่ง", self.reset_sub_position)
         act(m, "ปิด/เปิดเสียง", self.toggle_mute, "Ctrl+Shift+M")
         act(m, "เต็มจอ", self.toggle_fullscreen, "F11")
         m = mb.addMenu("อัตโนมัติ")
@@ -343,6 +384,37 @@ class MainWindow(QMainWindow):
         a = QAction("🔍 ค้นหา", self); a.triggered.connect(lambda *_: self.find_dlg.show_find(False)); tb.addAction(a)
         a = QAction("▶ ทำทั้งหมด", self); a.triggered.connect(lambda *_: self.run_steps(None)); tb.addAction(a)
         a = QAction("⚙ ตั้งค่า", self); a.triggered.connect(lambda *_: self.open_settings()); tb.addAction(a)
+
+    # =============================================================== subtitle position
+    def on_sub_moved(self, x_pct: float, bottom_pct: float) -> None:
+        self.s.sub_x_pct, self.s.sub_bottom_pct = x_pct, bottom_pct
+        self.apply_look()
+        self.pos_save.start()
+        self.status.setText(f"ตำแหน่งซับ: ซ้าย/ขวา {x_pct:+.1f}% · ห่างขอบ {bottom_pct:.1f}%")
+
+    def reset_sub_position(self) -> None:
+        self.on_sub_moved(0.0, 5.0)
+
+    def nudge_sub(self, dx: int, dy: int) -> None:
+        step = self.nudge.value()
+        x = min(max(self.s.sub_x_pct + dx * step, -45.0), 45.0)
+        b = min(max(self.s.sub_bottom_pct + dy * step, 0.0), 90.0)
+        self.on_sub_moved(round(x, 1), round(b, 1))
+
+    def selected_rows(self) -> list[int]:
+        rows = sorted({ix.row() for ix in self.table.selectionModel().selectedRows()}) or [self.row()]
+        return [r for r in rows if r >= 0]
+
+    def set_cue_pos(self, pos: str) -> None:
+        if not self.editor or self.worker:
+            return
+        n = self.editor.set_pos(self.selected_rows(), pos)
+        if n:
+            keep = self.row()
+            self.refresh_table(select=keep)
+            self.mark_dirty()
+            place = {"": "ล่าง", "middle": "กลาง", "top": "บน"}[pos]
+            self.status.setText(f"ย้าย {n} บรรทัดไปที่{place} (ย้อนกลับได้ด้วย Ctrl+Z)")
 
     # =============================================================== translation tools
     def refresh_models(self) -> None:
@@ -515,7 +587,8 @@ class MainWindow(QMainWindow):
                     break
                 except UnicodeDecodeError:
                     continue
-            cues = srt.parse_srt(text)
+            cues = [(a, b, *srt.split_pos_tag(t)) for a, b, t in srt.parse_srt(text)]
+            cues = [(a, b, t, pos) for a, b, t, pos in cues]
         except Exception as e:
             QMessageBox.warning(self, "เปิดไฟล์ซับไม่ได้", str(e))
             return
@@ -630,7 +703,7 @@ class MainWindow(QMainWindow):
             it.setForeground(color or self.table.palette().text().color())
 
         too_fast = cps(s) > self.s.max_cps
-        put(C_NO, f"{r + 1}{' 🔒' if s.locked else ''}")
+        put(C_NO, f"{r + 1}{' 🔒' if s.locked else ''}{ {'top': ' ⬆', 'middle': ' ⏺'}.get(s.pos, '') }")
         put(C_START, fmt_time(s.start)); put(C_END, fmt_time(s.end))
         put(C_DUR, f"{s.end - s.start:.2f}", BAD if too_fast else None)
         put(C_SRC, s.text.replace("\n", " ↵ "))
@@ -885,7 +958,7 @@ class MainWindow(QMainWindow):
             self.exit_fullscreen()
             return
         self.fs = FullscreenVideo()
-        self.fs.view.sub.set_style(self.s.sub_size_pct, self.s.sub_bottom_pct, self.s.sub_color, self.s.sub_outline)
+        self.fs.view.sub.set_style(self.s.sub_size_pct, self.s.sub_bottom_pct, self.s.sub_color, self.s.sub_outline, self.s.sub_x_pct)
         self.fs.closed.connect(self.exit_fullscreen)
         self.fs.toggleRequested.connect(self.toggle_play)
         self.player.setVideoOutput(self.fs.view.video)
@@ -932,9 +1005,10 @@ class MainWindow(QMainWindow):
         self.wave.set_playhead(t)
         cue = next(((k, s) for k, s in enumerate(self.proj.segments) if s.start <= t <= s.end), None) if self.proj else None
         text = (cue[1].th or cue[1].text) if cue else ""
-        self.view.sub.set_text(text)
+        cue_pos = cue[1].pos if cue else ""
+        self.view.sub.set_text(text, cue_pos)
         if self.fs is not None:
-            self.fs.view.sub.set_text(text)
+            self.fs.view.sub.set_text(text, cue_pos)
         playing = self.player.playbackState() == QMediaPlayer.PlayingState
         if self.loop_box.isChecked() and playing and (sel := self.seg()) is not None and (t >= sel.end or t < sel.start - 0.1):
             self.player.setPosition(int(sel.start * 1000))  # loop the selected line
@@ -1032,9 +1106,10 @@ class MainWindow(QMainWindow):
         self.save_project()
         tmp = Project.dir_for(self.s.work_dir, self.current) / "export.srt"
         tmp.parent.mkdir(parents=True, exist_ok=True)
-        cues = [(x.start, x.end, x.th or x.text) for x in self.proj.segments]
-        srt.write_srt(tmp, cues)
-        self.export_worker = ExportWorker(mode, self.s, self.current, str(tmp), out, self)
+        srt.write_srt(tmp, [(x.start, x.end, srt.with_pos_tag(x.th or x.text, x.pos) if self.s.srt_position_tags else (x.th or x.text))
+                            for x in self.proj.segments])
+        burn_cues = [(x.start, x.end, x.th or x.text, x.pos) for x in self.proj.segments]
+        self.export_worker = ExportWorker(mode, self.s, self.current, str(tmp), out, burn_cues, self)
         self.export_worker.progress.connect(self.on_export_progress)
         self.export_worker.done.connect(self.on_export_done)
         self.export_worker.failed.connect(self.on_export_failed)

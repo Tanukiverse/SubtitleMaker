@@ -72,3 +72,28 @@ def test_import_cues_as_translation_keeps_matching_source():
     assert all(s.locked for s in segs)
     e.undo()
     assert [s.th for s in segs] == ["ก", "ข", "ค"]
+
+
+def test_set_pos_split_merge_and_srt_tags():
+    from subtitle_maker.core import srt
+    segs = mk(); e = Editor(segs)
+    assert e.set_pos([0, 2, 9], "top") == 2 and segs[0].pos == "top" and segs[1].pos == ""
+    assert e.set_pos([0], "top") == 0  # nothing to change
+    e.undo()
+    assert segs[0].pos == "" and segs[2].pos == ""
+    segs[1].th = "ขข"
+    e.set_pos([1], "middle")
+    j = e.split(1, 1, "th")
+    assert segs[j].pos == "middle"
+    assert e.merge_next(1) and segs[1].pos == "middle"
+    assert srt.with_pos_tag("x", "top") == r"{\an8}x" and srt.with_pos_tag("x", "") == "x"
+    assert srt.split_pos_tag(r"{\an8}hello") == ("hello", "top")
+    assert srt.split_pos_tag(r"{\an5}hello") == ("hello", "middle")
+    assert srt.split_pos_tag(r"{\an2}hello") == ("hello", "")
+    assert srt.split_pos_tag("plain") == ("plain", "")
+
+
+def test_import_cues_with_positions():
+    segs = mk(); e = Editor(segs)
+    e.import_cues([(0, 1, "a", "top"), (2, 3, "b", "")], "th")
+    assert [s.pos for s in segs] == ["top", ""]

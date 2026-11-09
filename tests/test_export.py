@@ -23,8 +23,13 @@ def streams(path):
 
 def test_ass_color_and_style():
     assert export.ass_color("#ff8000") == "&H000080FF&"
-    st = export.force_style(Settings(sub_size_pct=6, sub_bottom_pct=5, burn_font="Tahoma"))
-    assert "FontName=Tahoma" in st and "FontSize=17.3" in st and "MarginV=14.4" in st
+    ass = export.build_ass([(0, 1.5, "ก\nข", "top"), (2, 3, "ค", ""), (4, 5, "ง", "middle")],
+                           Settings(sub_size_pct=6, sub_bottom_pct=5, sub_x_pct=10, burn_font="Tahoma"))
+    assert "Style: Default,Tahoma,17.3,&H00FFFFFF," in ass
+    assert r"{\an8\pos(230.4,14.4)}ก\Nข" in ass  # top: margin from the top, 10 % right of centre
+    assert r"{\an2\pos(230.4,273.6)}ค" in ass  # normal: margin from the bottom
+    assert r"{\an5\pos(230.4,144.0)}ง" in ass  # middle
+    assert "0:00:01.50" in ass and export.ass_time(3661.256) == "1:01:01.26"
 
 
 def test_burn_in_and_soft_sub(tmp_path):
@@ -32,12 +37,12 @@ def test_burn_in_and_soft_sub(tmp_path):
     make_video(v)
     sub = srt.write_srt(tmp_path / "s.srt", [(0.2, 2.5, "สวัสดีครับ\nบรรทัดสอง")])
     seen = []
-    out = export.burn_in(v, sub, tmp_path / "out" / "burned.mp4", Settings(), progress=seen.append)
+    out = export.burn_in(v, [(0.2, 2.5, "สวัสดีครับ\nบรรทัดสอง", "top")], tmp_path / "out" / "burned.mp4", Settings(), progress=seen.append)
     kinds = [k for _, k in [(s[0], s[1]) if len(s) > 1 else (s[0], "") for s in streams(out)]]
     assert out.exists() and out.stat().st_size > 1000 and seen and seen[-1] > 0.9
     # the picture really changed: the burned file differs from a plain re-encode of the same source
     plain = tmp_path / "plain.mp4"
-    export.burn_in(v, srt.write_srt(tmp_path / "late.srt", [(50.0, 51.0, "x")]), plain, Settings())
+    export.burn_in(v, [(50.0, 51.0, "x", "")], plain, Settings())
     assert out.read_bytes() != plain.read_bytes()
 
     mkv = export.soft_sub(v, sub, tmp_path / "soft.mkv")

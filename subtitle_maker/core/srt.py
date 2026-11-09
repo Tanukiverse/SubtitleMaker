@@ -19,6 +19,22 @@ def parse_ts(s: str) -> float:
     return int(h) * 3600 + int(m) * 60 + int(sec) + int(ms) / 1000
 
 
+POS_TAGS = {"top": "{\\an8}", "middle": "{\\an5}"}
+_LEAD_TAG = re.compile(r"^\{\\an([1-9])\}")
+
+
+def with_pos_tag(text: str, pos: str) -> str:
+    return POS_TAGS.get(pos, "") + text
+
+
+def split_pos_tag(text: str) -> tuple[str, str]:
+    """'{\\an8}hello' -> ('hello', 'top'). Other alignments (bottom, or none) -> ''."""
+    m = _LEAD_TAG.match(text)
+    if not m:
+        return text, ""
+    return text[m.end():], {"7": "top", "8": "top", "9": "top", "4": "middle", "5": "middle", "6": "middle"}.get(m.group(1), "")
+
+
 def to_srt(cues: list[tuple[float, float, str]]) -> str:
     """cues: [(start, end, text)]. Empty cues are dropped and the rest renumbered."""
     out = []

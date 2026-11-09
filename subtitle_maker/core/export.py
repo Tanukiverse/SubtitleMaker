@@ -26,10 +26,46 @@ def ass_color(hex_rgb: str) -> str:
     return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}&".upper()
 
 
-def force_style(s: Settings) -> str:
-    return (f"FontName={s.burn_font},FontSize={s.sub_size_pct / 100 * ASS_H:.1f},PrimaryColour={ass_color(s.sub_color)},"
-            f"OutlineColour={ass_color(s.sub_outline)},BorderStyle=1,Outline=2,Shadow=0,Alignment=2,"
-            f"MarginV={s.sub_bottom_pct / 100 * ASS_H:.1f}")
+ASS_W = 384.0
+
+
+def ass_time(t: float) -> str:
+    cs = max(0, round(t * 100))
+    h, cs = divmod(cs, 360000)
+    m, cs = divmod(cs, 6000)
+    sec, cs = divmod(cs, 100)
+    return f"{h}:{m:02d}:{sec:02d}.{cs:02d}"
+
+
+def build_ass(cues: list[tuple], s: Settings) -> str:
+    """cues: [(start, end, text, pos)]. One style from the settings; every line gets an explicit position
+    (\\pos) so the sideways shift and the top / middle / bottom choice per cue survive."""
+    x = ASS_W / 2 + s.sub_x_pct / 100 * ASS_W
+    margin = s.sub_bottom_pct / 100 * ASS_H
+    head = (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 384\nPlayResY: 288\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
+        "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Default,{s.burn_font},{s.sub_size_pct / 100 * ASS_H:.1f},{ass_color(s.sub_color).rstrip('&')},&H000000FF,"
+        f"{ass_color(s.sub_outline).rstrip('&')},&H00000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,{margin:.1f},1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+    lines = []
+    for cue in cues:
+        start, end, text = cue[:3]
+        pos = cue[3] if len(cue) > 3 else ""
+        text = text.strip()
+        if not text:
+            continue
+        if pos == "top":
+            tag = f"{{\\an8\\pos({x:.1f},{margin:.1f})}}"
+        elif pos == "middle":
+            tag = f"{{\\an5\\pos({x:.1f},{ASS_H / 2:.1f})}}"
+        else:
+            tag = f"{{\\an2\\pos({x:.1f},{ASS_H - margin:.1f})}}"
+        body = text.replace("{", "(").replace("}", ")").replace("\n", "\\N")
+        lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Default,,0,0,0,,{tag}{body}")
+    return head + "\n".join(lines) + "\n"
 
 
 def _run(cmd: list[str], total: float, progress: Callable[[float], None] | None, should_stop: Callable[[], bool] | None,
@@ -56,19 +92,19 @@ def _run(cmd: list[str], total: float, progress: Callable[[float], None] | None,
             p.kill()
 
 
-def burn_in(video: str | Path, srt_file: str | Path, out: str | Path, s: Settings,
+def burn_in(video: str | Path, cues: list[tuple], out: str | Path, s: Settings,
             progress: Callable[[float], None] | None = None, should_stop: Callable[[], bool] | None = None) -> Path:
-    """Re-encode the video (H.264 + AAC) with the subtitles drawn into the picture."""
+    """Re-encode the video (H.264 + AAC) with the subtitles drawn into the picture.
+    cues: [(start, end, text, pos)]."""
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     total = duration(video)
     with tempfile.TemporaryDirectory() as tmp:
         # the subtitles filter takes a path inside a filter string, where drive letters and quotes break it:
         # run in a temp folder and refer to a plain file name instead
-        shutil.copyfile(srt_file, Path(tmp) / "sub.srt")
-        vf = f"subtitles=sub.srt:force_style='{force_style(s)}'"
+        (Path(tmp) / "sub.ass").write_text(build_ass(cues, s), encoding="utf-8")
         cmd = [_tool("ffmpeg"), "-y", "-hide_banner", "-v", "error", "-nostats", "-progress", "pipe:1",
-               "-i", str(Path(video).resolve()), "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf,
+               "-i", str(Path(video).resolve()), "-map", "0:v:0", "-map", "0:a:0?", "-vf", "subtitles=sub.ass",
                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out.resolve())]
         _run(cmd, total, progress, should_stop, cwd=tmp)

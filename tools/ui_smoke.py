@@ -123,6 +123,33 @@ def main() -> int:
     w.undo()
     assert w.seg(0).th == old
 
+    # subtitle position: drag it on the video, nudge, reset, per-cue top
+    from PySide6.QtCore import QPointF as _P
+    w.view.sub.set_text("ทดสอบตำแหน่งซับ"); w.view.grab()  # a paint computes where the text sits
+    r = w.view.sub.text_rect
+    assert not r.isNull()
+    c = w.view.mapFromScene(r.center())
+    for typ, dx, dy in ((QEvent.MouseButtonPress, 0, 0), (QEvent.MouseMove, 60, -40), (QEvent.MouseButtonRelease, 60, -40)):
+        pt = _P(c.x() + dx, c.y() + dy)
+        ev = QMouseEvent(typ, pt, pt, Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        {QEvent.MouseButtonPress: w.view.mousePressEvent, QEvent.MouseMove: w.view.mouseMoveEvent,
+         QEvent.MouseButtonRelease: w.view.mouseReleaseEvent}[typ](ev)
+    assert w.s.sub_x_pct > 1 and w.s.sub_bottom_pct > 6, (w.s.sub_x_pct, w.s.sub_bottom_pct)
+    w.reset_sub_position(); assert (w.s.sub_x_pct, w.s.sub_bottom_pct) == (0.0, 5.0)
+    w.nudge.setValue(2.0); w.nudge_sub(1, 1)
+    assert (w.s.sub_x_pct, w.s.sub_bottom_pct) == (2.0, 7.0)
+    w.reset_sub_position()
+    w.goto_row(0); w.set_cue_pos("top")
+    assert w.seg(0).pos == "top" and "⬆" in w.table.item(0, 0).text()
+    w.save_srt()
+    first = srt.parse_srt(out.read_text("utf-8"))[0][2]
+    assert first.startswith("{" + chr(92) + "an8}"), first
+    w.open_srt(str(out), "th")  # the tag comes back as a position, not as text
+    assert w.seg(0).pos == "top" and not w.seg(0).th.startswith("{")
+    w.undo()
+    w.undo()
+    assert w.seg(0).pos == ""
+
     # player controls
     w.volume.setValue(35)
     assert abs(w.audio_out.volume() - 0.35) < 0.01 and w.s.volume == 35

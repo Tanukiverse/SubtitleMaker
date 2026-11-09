@@ -30,6 +30,7 @@ class Settings:
     max_cps: float = 17.0  # reading speed: characters per second
     min_duration: float = 1.0
     out_dir: str = ""  # empty = next to the video
+    srt_position_tags: bool = True  # write {\an8} (top) / {\an5} (middle) in the .srt for cues that have a position
     write_source_srt: bool = False  # also write the untranslated .srt
     ui_font_size: int = 11
     volume: int = 80  # player volume, 0-100
@@ -37,7 +38,8 @@ class Settings:
     edit_font_size: int = 13  # text boxes under the list
     # subtitle look: the same on the video preview and in burned-in video (percent of the picture height)
     sub_size_pct: float = 6.0
-    sub_bottom_pct: float = 5.0
+    sub_bottom_pct: float = 5.0  # distance from the bottom edge (from the top edge for "top" cues)
+    sub_x_pct: float = 0.0  # sideways shift of the subtitle: percent of the picture width, + = right
     sub_color: str = "#ffffff"
     sub_outline: str = "#000000"
     burn_font: str = "Leelawadee UI"  # a Windows font that has Thai
