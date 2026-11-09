@@ -10,11 +10,15 @@ _JUNK = re.compile(r"^[\s\.\,\!\?\-♪♫~…・。、]*$|ご視聴ありがと�
                    r"字幕|Amara\.org", re.I)
 
 
+def is_junk(text: str) -> bool:
+    return bool(_JUNK.search(text))
+
+
 def drop_junk(segs: list[Seg]) -> list[Seg]:
     out: list[Seg] = []
     repeats = 0
     for s in segs:
-        if _JUNK.search(s.text):
+        if is_junk(s.text):
             continue
         # the same line three or more times in a row is a hallucination loop
         if out and s.text == out[-1].text:

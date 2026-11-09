@@ -71,6 +71,11 @@ def build_messages(cues: list[tuple[int, str]], context: list[tuple[str, str]], 
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def strip_id(answer: str, i: int) -> str:
+    """In a free-form reply the model often numbers its lines with the cue id ('262 รุ่นพี่', '262. ...', '[262]')."""
+    return re.sub(rf"^\s*[\[(]?{i}[\])]?\s*[.):\-–]?\s*", "", answer.strip())
+
+
 _ALT = re.compile(r"\s*\(?\s*(ครับ|ค่ะ|คะ|ผม|ฉัน|ดิฉัน|นะครับ|นะคะ)\s*/\s*(ครับ|ค่ะ|คะ|ผม|ฉัน|ดิฉัน|นะครับ|นะคะ)\s*\)?")
 
 
@@ -154,7 +159,7 @@ class OllamaTranslator:
                     answers = [" ".join(answers)]
                 if len(answers) != len(cues):
                     raise
-                result = {i: pick_one(" ".join(a.split())) for (i, _), a in zip(cues, answers)}
+                result = {i: pick_one(" ".join(strip_id(a, i).split())) for (i, _), a in zip(cues, answers)}
         wrong = [i for i, t in result.items() if not in_target_script(t, tgt)]
         if wrong:  # some finetunes answer in the source language: ask once more in plain JSON mode
             again = messages[:-1] + [{**messages[-1], "content": messages[-1]["content"] +

@@ -42,7 +42,8 @@ class StepRunner:
         if not wav.exists():
             self.do_audio(p)
         segs, lang = asr.transcribe(wav, self.s.asr_model, self.s.source_lang, self.s.use_gpu, self.s.vad,
-                                    progress=lambda f: self.progress("asr", f), should_stop=self.should_stop)
+                                    progress=lambda f: self.progress("asr", f), should_stop=self.should_stop,
+                                    fill_gaps=self.s.fill_gaps)
         # hand-edited cues survive a re-run only if they were kept; a fresh transcription replaces everything
         p.segments, p.lang = segs, lang
         p.done["asr"] = True

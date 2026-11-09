@@ -154,3 +154,31 @@ def test_parse_terms_and_extract_dedupes_known():
 
     got = extract_terms(T(TranslatorConfig()), ["a"] * 250, "ja", "th", known={"ホワ": "ฮวา"}, per_request=100)
     assert got == [("たかし", "ทาคาชิ")]  # 3 requests, same terms deduped, known term skipped
+
+
+def test_find_gaps_only_reports_loud_stretches():
+    import numpy as np
+    from subtitle_maker.core.asr import find_gaps
+    rate = 16000
+    x = np.zeros(rate * 60, dtype=np.float32)
+    x[0:10 * rate] = 0.03   # speech 0-10 s
+    x[10 * rate:30 * rate] = 0.03   # loud, but no cue: a song
+    x[30 * rate:40 * rate] = 0.0001  # silence, no cue: must be ignored
+    x[40 * rate:50 * rate] = 0.03   # speech 40-50 s
+    cues = [Seg(0, 10, "a"), Seg(40, 50, "b")]
+    assert find_gaps(cues, x, rate) == [(10, 40)] or find_gaps(cues, x, rate)[0][0] == 10
+    gaps = find_gaps(cues, x, rate)
+    assert all(b - a >= 4 for a, b in gaps) and not any(a >= 30 and b <= 40 and b - a < 4 for a, b in gaps)
+
+
+def test_junk_phrase_detected_before_cutting():
+    assert segment.is_junk("ご視聴ありがとうございました") and not segment.is_junk("先輩 先輩")
+
+
+def test_strip_id_from_freeform_lines():
+    from subtitle_maker.core.translate import strip_id
+    assert strip_id("262 รุ่นพี่ รุ่นพี่", 262) == "รุ่นพี่ รุ่นพี่"
+    assert strip_id("266.เพราะอยู่กับทุกคน", 266) == "เพราะอยู่กับทุกคน"
+    assert strip_id("[7] สวัสดี", 7) == "สวัสดี"
+    assert strip_id("7 วัน ต่อมา", 8) == "7 วัน ต่อมา"  # a number that is not the cue's id stays
+    assert strip_id("สวัสดี", 1) == "สวัสดี"

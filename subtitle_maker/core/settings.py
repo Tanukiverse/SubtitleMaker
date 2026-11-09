@@ -18,6 +18,7 @@ class Settings:
     target_lang: str = "th"
     use_gpu: bool = True
     vad: bool = True
+    fill_gaps: bool = True  # transcribe loud stretches the VAD pass left without subtitles (songs, quiet speech)
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
     ollama_keep_alive: str = "5m"
