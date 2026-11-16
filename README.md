@@ -9,13 +9,43 @@
 4. **แปล**: Ollama ทีละชุด 25 บรรทัด พร้อมบรรทัดก่อนหน้าเป็นบริบท และอภิธานศัพท์
 5. **ส่งออก**: ตัดบรรทัดไทยด้วย pythainlp (ไม่ตัดกลางคำ), ปรับเวลาให้พออ่านทัน, เขียน `<ชื่อวิดีโอ>.th.srt`
 
-## ติดตั้ง
-ต้องมี Python 3.12, ffmpeg (อยู่ใน PATH) และ Ollama
+## ติดตั้ง (ครั้งแรก)
+ใช้ได้บน Windows 10/11 ทำตามลำดับนี้ (เปิด PowerShell หรือ Command Prompt)
+
+**1. ติดตั้งโปรแกรมที่ต้องใช้ 3 ตัว**
+| โปรแกรม | วิธีติดตั้ง | ตรวจว่าติดตั้งแล้ว |
+|---|---|---|
+| Python 3.12 | https://www.python.org/downloads/ (ติ๊ก *Add python.exe to PATH* และเลือก *py launcher*) | `py -3.12 --version` |
+| ffmpeg | `winget install Gyan.FFmpeg` แล้วเปิดหน้าต่างใหม่ | `ffmpeg -version` |
+| Ollama | https://ollama.com/download | `ollama --version` |
+
+การ์ดจอ NVIDIA ไม่บังคับ แต่ถอดเสียงเร็วกว่ามาก (ต้องมีไดรเวอร์ล่าสุด ไม่ต้องลง CUDA เอง) ถ้าไม่มีจะใช้ CPU อัตโนมัติ และช้ากว่า
+
+**2. ดาวน์โหลดโปรแกรม**
 ```
-setup.bat
+git clone https://github.com/Tanukiverse/SubtitleMaker.git
+cd SubtitleMaker
 ```
-ดึงโมเดลแปลที่จะใช้ เช่น `ollama pull hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q4_K_M`
-โมเดล Whisper ดาวน์โหลดเองครั้งแรกที่ใช้ลง `models\whisper` (`large-v3-turbo` ราว 1.6 GB)
+ไม่มี git: กดปุ่มเขียว *Code* → *Download ZIP* บน GitHub แล้วแตกไฟล์
+
+**3. ติดตั้งไลบรารี** ดับเบิลคลิก `setup.bat` (หรือรันใน PowerShell) สคริปต์สร้างโฟลเดอร์ `.venv` และติดตั้งไลบรารีให้เอง ใช้เวลาไม่กี่นาที ต้องต่ออินเทอร์เน็ต
+
+**4. ดึงโมเดลแปล** (เปิด Ollama ค้างไว้ที่ถาดระบบ)
+```
+ollama pull hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q4_K_M
+```
+ใช้โมเดลอื่นได้ เลือกในแท็บ อัตโนมัติ หรือ ⚙ ตั้งค่า
+
+**5. เปิดโปรแกรม** ดับเบิลคลิก `Start SubtitleMaker.bat`
+- ครั้งแรกที่กดถอดเสียง โปรแกรมดาวน์โหลดโมเดล Whisper เอง (`large-v3-turbo` ราว 1.6 GB) ลง `models\whisper` ครั้งต่อไปไม่ต้องโหลดอีก
+- ถ้าเครื่องหน่วยความจำการ์ดจอน้อย ให้เลือกโมเดล Whisper ที่เล็กลงใน ⚙ ตั้งค่า
+
+**อัปเดตเวอร์ชันใหม่:** `git pull` แล้วรัน `setup.bat` ซ้ำ
+
+**แก้ปัญหาที่พบบ่อย**
+- `setup.bat` บอกไม่พบ Python / ffmpeg: ติดตั้งแล้วแต่ยังไม่อยู่ใน PATH ปิดแล้วเปิดหน้าต่างคำสั่งใหม่ หรือรีสตาร์ทเครื่อง
+- แปลไม่ได้ "เชื่อมต่อ Ollama ไม่ได้": ยังไม่ได้เปิด Ollama หรือยังไม่ได้ `ollama pull` โมเดล
+- ถอดเสียงช้ามาก: ใช้ CPU อยู่ ตรวจว่าไดรเวอร์ NVIDIA ล่าสุดและเปิด "ใช้ GPU" ใน ⚙ ตั้งค่า
 
 ## ใช้งาน
 ดับเบิลคลิก `Start SubtitleMaker.bat` แล้วลากวิดีโอ/เสียง (หลายไฟล์ได้) มาวาง กด **▶ ทำทั้งหมด** (F5) หรือกดทีละขั้น
