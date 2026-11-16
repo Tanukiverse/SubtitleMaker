@@ -61,9 +61,10 @@ class StepRunner:
         keep = {i: s.th for i, s in enumerate(p.segments) if s.locked and s.th}
         res = tr.translate([s.text for s in p.segments], p.lang, self.s.target_lang, keep=keep,
                            progress=lambda f: self.progress("translate", f), should_stop=self.should_stop)
-        for s, t in zip(p.segments, res):
+        for i, (s, t) in enumerate(zip(p.segments, res)):
             if not s.locked:
-                s.th = t
+                # a cue the model could not translate keeps its source text so the subtitle is not blank
+                s.th = t or (s.text if i in tr.failed else "")
         p.done["translate"] = True
         tr.unload()  # give the VRAM back
 

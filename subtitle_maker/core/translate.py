@@ -42,6 +42,10 @@ class TranslationError(RuntimeError):
     pass
 
 
+class FatalTranslationError(TranslationError):
+    """Retrying cannot help (Ollama unreachable, user pressed stop): abort instead of skipping the chunk."""
+
+
 SCHEMA = {"type": "object", "properties": {"translations": {"type": "array", "items": {
     "type": "object", "properties": {"id": {"type": "integer"}, "text": {"type": "string"}},
     "required": ["id", "text"]}}}, "required": ["translations"]}
@@ -91,6 +95,12 @@ def pick_one(text: str) -> str:
     return arabic_digits(_ALT.sub(lambda m: m.group(1), text))
 
 
+def is_degenerate(text: str) -> bool:
+    """A runaway loop like 'ฮั่ ฮั่ ฮั่ ฮั่' is not a translation."""
+    words = text.split()
+    return len(words) >= 4 and len(set(words)) / len(words) <= 0.34
+
+
 def parse_response(content: str) -> dict[int, str]:
     content = content.strip()
     if content.startswith("```"):
@@ -123,6 +133,7 @@ class OllamaTranslator:
         self.http = session or requests.Session()
         self._think: bool | None = False
         self.wrong_language: list[int] = []
+        self.failed: list[int] = []  # cue indices the model could not translate even one by one
 
     def list_models(self) -> list[str]:
         r = self.http.get(f"{self.cfg.url}/api/tags", timeout=10)
@@ -130,8 +141,11 @@ class OllamaTranslator:
         return [m["name"] for m in r.json().get("models", [])]
 
     def _chat(self, messages, think, fmt=SCHEMA) -> str:
+        # num_predict caps runaway loops ("ฮั่ ฮั่ ฮั่ ..."): a malformed reply then fails fast and is retried smaller
         body = {"model": self.cfg.model, "messages": messages, "stream": False,
-                "keep_alive": self.cfg.keep_alive, "options": {"temperature": self.cfg.temperature}}
+                "keep_alive": self.cfg.keep_alive,
+                "options": {"temperature": self.cfg.temperature, "repeat_penalty": 1.1,
+                            "num_predict": 1024 + 200 * len(messages[-1]["content"].split('"id"'))}}
         if fmt is not None:
             body["format"] = fmt
         if think is not None:
@@ -139,7 +153,9 @@ class OllamaTranslator:
         try:
             r = self.http.post(f"{self.cfg.url}/api/chat", json=body, timeout=self.cfg.timeout)
         except requests.ConnectionError as e:
-            raise TranslationError(f"เชื่อมต่อ Ollama ไม่ได้ที่ {self.cfg.url} (เปิด Ollama แล้วหรือยัง?)") from e
+            raise FatalTranslationError(f"เชื่อมต่อ Ollama ไม่ได้ที่ {self.cfg.url} (เปิด Ollama แล้วหรือยัง?)") from e
+        except requests.Timeout as e:
+            raise TranslationError(f"Ollama ตอบช้าเกิน {self.cfg.timeout:.0f} วินาที") from e
         if r.status_code >= 400:
             raise TranslationError(f"Ollama {r.status_code}: {r.text[:300]}")
         return r.json()["message"]["content"]
@@ -165,22 +181,53 @@ class OllamaTranslator:
                 answers = [a.strip().strip('"“”').strip() for a in free.strip().splitlines() if a.strip()]
                 if len(cues) == 1 and answers:
                     answers = [" ".join(answers)]
-                if len(answers) != len(cues):
+                if len(answers) != len(cues) or any(is_degenerate(a) for a in answers):
                     raise
                 result = {i: pick_one(" ".join(strip_id(a, i).split())) for (i, _), a in zip(cues, answers)}
         wrong = [i for i, t in result.items() if not in_target_script(t, tgt)]
         if wrong:  # some finetunes answer in the source language: ask once more in plain JSON mode
             again = messages[:-1] + [{**messages[-1], "content": messages[-1]["content"] +
                                       f"\n\nImportant: write every translation in {LANG_NAMES.get(tgt, tgt)} only. Answer as JSON."}]
-            for i, t in parse_response(self._ask(again, fmt="json")).items():
-                if i in wrong and in_target_script(t, tgt):
-                    result[i] = t
+            try:
+                for i, t in parse_response(self._ask(again, fmt="json")).items():
+                    if i in wrong and in_target_script(t, tgt):
+                        result[i] = t
+            except FatalTranslationError:
+                raise
+            except TranslationError:
+                pass  # keep what we have; the lines stay in wrong_language
         self.wrong_language += [i for i, t in result.items() if not in_target_script(t, tgt)]
         for i, t in [(i, t) for i, t in cues if not result.get(i, "").strip()]:
             single = parse_response(self._ask(build_messages([(i, t)], context, src, tgt, self.cfg)))
             if single:
                 result[i] = next(iter(single.values()))
         return result
+
+    def _translate_robust(self, cues: list[tuple[int, str]], context: list[tuple[str, str]], src: str, tgt: str) -> dict[int, str]:
+        """One bad reply must not abort the whole video: on failure split the chunk in half and retry, down to a
+        single cue; a cue that still fails is recorded in self.failed and left untranslated."""
+        try:
+            return self._translate_chunk(cues, context, src, tgt)
+        except FatalTranslationError:
+            raise
+        except TranslationError:
+            if len(cues) == 1:
+                try:  # one more try, a bit warmer, so a deterministic loop can break
+                    old, self.cfg.temperature = self.cfg.temperature, min(1.0, self.cfg.temperature + 0.4)
+                    try:
+                        return self._translate_chunk(cues, context, src, tgt)
+                    finally:
+                        self.cfg.temperature = old
+                except FatalTranslationError:
+                    raise
+                except TranslationError:
+                    self.failed.append(cues[0][0])
+                    return {}
+            mid = len(cues) // 2
+            left = self._translate_robust(cues[:mid], context, src, tgt)
+            ctx = context + [(t, left[i]) for i, t in cues[:mid] if left.get(i)]
+            right = self._translate_robust(cues[mid:], ctx[-self.cfg.context:], src, tgt)
+            return {**left, **right}
 
     def translate(self, texts: list[str], src: str, tgt: str, keep: dict[int, str] | None = None,
                   progress: Callable[[float], None] | None = None,
@@ -191,14 +238,15 @@ class OllamaTranslator:
         out = [keep.get(i, "") for i in range(len(texts))]
         todo = [i for i, t in enumerate(texts) if i not in keep and t.strip()]
         self.wrong_language = []
+        self.failed = []
         done = 0
         for k in range(0, len(todo), self.cfg.chunk):
             if should_stop and should_stop():
-                raise TranslationError("หยุดโดยผู้ใช้")
+                raise FatalTranslationError("หยุดโดยผู้ใช้")
             chunk = todo[k:k + self.cfg.chunk]
             first = chunk[0]
             ctx = [(texts[j], out[j]) for j in range(max(0, first - self.cfg.context), first) if out[j]]
-            res = self._translate_chunk([(i, texts[i]) for i in chunk], ctx, src, tgt)
+            res = self._translate_robust([(i, texts[i]) for i in chunk], ctx, src, tgt)
             for i in chunk:
                 out[i] = res.get(i, "")
             done += len(chunk)
@@ -214,11 +262,12 @@ class OllamaTranslator:
         cur = list(current)
         out: dict[int, str] = {}
         self.wrong_language = []
+        self.failed = []
         for k in range(0, len(todo), self.cfg.chunk):
             chunk = todo[k:k + self.cfg.chunk]
             first = chunk[0]
             ctx = [(texts[j], cur[j]) for j in range(max(0, first - self.cfg.context), first) if cur[j]]
-            res = self._translate_chunk([(i, texts[i]) for i in chunk], ctx, src, tgt)
+            res = self._translate_robust([(i, texts[i]) for i in chunk], ctx, src, tgt)
             for i in chunk:
                 if res.get(i, "").strip():
                     out[i] = cur[i] = res[i]

@@ -96,6 +96,22 @@ def test_translate_chunks_and_keeps_locked():
     assert tr.calls == 2  # 6 cues to translate in chunks of 3
 
 
+def test_bad_reply_is_split_and_skipped_not_fatal():
+    import json
+
+    class Bad(FakeOllama):
+        def _ask(self, messages, fmt=None):
+            user = messages[-1]["content"]
+            ids = [c["id"] for c in json.loads(user[:user.index("\n\nAnswer in")])["cues"]]
+            if 3 in ids:  # cue 3 always makes the model ramble
+                return "ฮั่ ฮั่ ฮั่ ฮั่"
+            return super()._ask(messages, fmt)
+
+    tr = Bad(TranslatorConfig(chunk=6))
+    out = tr.translate([f"line{i}" for i in range(6)], "en", "th")
+    assert out[0] == "ก0" and out[5] == "ก5" and out[3] == "" and tr.failed == [3]
+
+
 def test_project_roundtrip(tmp_path):
     p = Project(video=str(tmp_path / "ตอนที่ 1.mp4"), lang="ja", segments=[Seg(0, 1, "a", "ก", True)])
     p.save(tmp_path)
